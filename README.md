@@ -11,6 +11,9 @@ Saved columns:
 `Timestamp, Type, SignIn Date, OWNCODE, OwnerName, Highroller BA Name, Highroller BA Code,
 Team Forms, Team Supports, Team ADS, Highroller Forms, Highroller Supports, Highroller ADS`
 
+If the BA isn't in the dropdown, type their name in **"BA not in the list?"** — it's saved
+with that row only (BA Code blank); the Admin sheet is not changed.
+
 ADS is calculated, not typed: **Oneoff = Supports ÷ Forms**, **RG = Supports × 8**.
 
 ## Local run

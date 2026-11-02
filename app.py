@@ -1,7 +1,7 @@
 """
 Scores and Highrollers — owner night-scores form (Streamlit + Google Sheets)
 ===========================================================================
-Form order:  Type (RG / Oneoff)  →  Owner  →  Highrolling BA  →  SignIn Date
+Form order:  Type (RG / Oneoff)  →  Owner  →  Highrolling BA (or type a new BA name)  →  SignIn Date
              →  Team Sales (Forms, Supports)  →  Highrolling BA (Forms, Supports)  →  Submit
 
 Dropdown data comes from the Donation Pilot Project's Admin sheets, read-only:
@@ -250,18 +250,35 @@ if not code:
 ba_pairs = A["ba_by_code"].get(code, [])
 ba_labels = [f"{nm}  ·  {cd}" if cd else nm for nm, cd in ba_pairs]
 label_to_ba = dict(zip(ba_labels, ba_pairs))
+new_ba_key = f"newba_{kind}_{code}_{n}"
+new_ba_typed = bool(str(st.session_state.get(new_ba_key, "") or "").strip())
+if new_ba_typed:
+    ba_ph = "Disabled — you're typing a new BA name below"
+elif ba_labels:
+    ba_ph = "Search BA name or code…"
+else:
+    ba_ph = "No BAs mapped for this owner — type the name below"
 ba_label = st.selectbox(
     f"3 · {BA_LABEL} *",
     ba_labels,
     index=None,
-    placeholder="Search BA name or code…" if ba_labels else "No BAs mapped for this owner",
-    disabled=not ba_labels,
+    placeholder=ba_ph,
+    disabled=not ba_labels or new_ba_typed,
     key=f"ba_{kind}_{code}_{n}",
 )
-if not ba_label:
-    st.info("Select the **Highrolling BA** to continue.")
+# a BA missing from the Admin sheet — saved with this row only, BA Code left blank
+new_ba_name = " ".join(st.text_input(
+    "BA not in the list? Type the BA name", key=new_ba_key, placeholder="Full name",
+).split())
+if new_ba_name:
+    # typed a name that is in the list after all → use that BA (and its code)
+    existing = {nm.lower(): (nm, cd) for nm, cd in ba_pairs}
+    ba_name, ba_code = existing.get(new_ba_name.lower(), (new_ba_name, ""))
+elif ba_label:
+    ba_name, ba_code = label_to_ba[ba_label]
+else:
+    st.info("Select the **Highrolling BA**, or type their name if they're not in the list, to continue.")
     st.stop()
-ba_name, ba_code = label_to_ba[ba_label]
 
 # ---- 4) SignIn Date ----
 signin = st.date_input("4 · SignIn Date *", value=None, format="YYYY-MM-DD", key=f"signin_{n}")
