@@ -10,6 +10,14 @@ Dropdown data comes from the Donation Pilot Project's Admin sheets, read-only:
       An One-Off OWNCODE can have several Owners rows (one per Client); it is shown
       once, and its BA dropdown lists that owner's BAs across all Clients.
 
+Owner passwords live in the Scores sheet's own "Passwords" worksheet
+(OWNCODE|OwnerName|Password|Set On — created automatically), never in the Admin
+sheets. The first time an owner with no password is picked, the form asks them
+to set one (typed twice); from then on it asks for it before anything below the
+owner, once per browser session. One password covers the OWNCODE under both RG
+and Oneoff. Clear the owner's Password cell (or delete the row) to let them set
+a new one.
+
 Each submit appends one row to the first worksheet of the Scores sheet (header
 row is written automatically if the sheet is empty):
     Timestamp, Type, SignIn Date, OWNCODE, OwnerName, Highroller BA Name,
@@ -49,6 +57,9 @@ HEADERS = ["Timestamp", "Type", "SignIn Date", "OWNCODE", "OwnerName", "Highroll
            "Highroller BA Code", "Team Forms", "Team Supports", "Team ADS",
            "Highroller Forms", "Highroller Supports", "Highroller ADS"]
 BA_LABEL = "Select Highrolling BA from Your Team For Highroller Poster"
+PASSWORDS_WS = "Passwords"
+PASSWORD_HEADERS = ["OWNCODE", "OwnerName", "Password", "Set On"]
+MIN_PASSWORD_LEN = 4
 IST = timezone(timedelta(hours=5, minutes=30))
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -145,6 +156,53 @@ def load_owners(kind):
             "code_by_label": {v: k for k, v in label_by_code.items()},
             "owner_name_by_code": owner_name_by_code,
             "ba_by_code": ba_by_code}
+
+
+# --------------------------------------------------------------------------- #
+#  Owner passwords — "Passwords" worksheet of the Scores sheet
+# --------------------------------------------------------------------------- #
+class PasswordAlreadySet(Exception):
+    pass
+
+
+def get_passwords_ws():
+    """The Scores sheet's Passwords worksheet, created (with headers) the first time."""
+    sh = get_gc().open_by_key(sheet_id(SCORES_SHEET_KEY))
+    try:
+        return sh.worksheet(PASSWORDS_WS)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(PASSWORDS_WS, rows=200, cols=len(PASSWORD_HEADERS))
+        ws.update([PASSWORD_HEADERS], "A1")
+        return ws
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_passwords():
+    """{OWNCODE: password} — blank/missing means the owner hasn't set one yet."""
+    values = get_passwords_ws().get_all_values()
+    passwords = {}
+    for row in values[1:]:
+        c = row[0].strip() if row else ""
+        pw = row[2].strip() if len(row) > 2 else ""
+        if c and pw and not passwords.get(c):
+            passwords[c] = pw
+    return passwords
+
+
+def set_owner_password(code, owner_name, password):
+    """Saves a first-time password for OWNCODE `code`. Re-reads the sheet first so
+    two people setting one at the same moment can't overwrite each other."""
+    ws = get_passwords_ws()
+    values = ws.get_all_values()
+    set_on = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
+    for i, row in enumerate(values[1:], start=2):
+        if row and row[0].strip() == code:
+            if len(row) > 2 and row[2].strip():
+                raise PasswordAlreadySet(code)
+            # admin cleared the cell to reset it — reuse the row
+            ws.update([[code, owner_name, password, set_on]], f"A{i}")
+            return
+    ws.append_row([code, owner_name, password, set_on], value_input_option="RAW", table_range="A1")
 
 
 # --------------------------------------------------------------------------- #
@@ -245,6 +303,54 @@ code = A["code_by_label"].get(owner_label) if owner_label else None
 if not code:
     st.info("Select the **Owner** to continue.")
     st.stop()
+owner_name = A["owner_name_by_code"].get(code, "")
+
+# ---- Password gate (first time: set one; after that: enter it once per session) ----
+st.session_state.setdefault("verified_owners", set())
+if code in st.session_state.verified_owners:
+    st.caption("🔓 Password verified for this owner.")
+else:
+    try:
+        stored_password = load_passwords().get(code, "")
+    except Exception as e:  # noqa: BLE001
+        st.error(f"Couldn't load owner passwords from the Scores sheet: {e}")
+        st.stop()
+    if not stored_password:
+        st.info(
+            "🔐 No password set for this owner yet — set one now. "
+            "You'll be asked for it every time you pick this owner from now on."
+        )
+        pc1, pc2 = st.columns(2)
+        new_password = pc1.text_input("Set a password", type="password", key=f"newpw_{code}")
+        confirm_password = pc2.text_input("Confirm password", type="password", key=f"newpw_confirm_{code}")
+        if st.button("💾 Save password", key=f"savepw_{code}"):
+            if len(new_password or "") < MIN_PASSWORD_LEN:
+                st.error(f"Password must be at least {MIN_PASSWORD_LEN} characters.")
+            elif new_password != confirm_password:
+                st.error("Passwords don't match.")
+            else:
+                try:
+                    set_owner_password(code, owner_name, new_password)
+                except PasswordAlreadySet:
+                    load_passwords.clear()
+                    st.error("A password was just set for this owner by someone else — "
+                             "pick the owner again and enter it.")
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"Couldn't save password: {e}")
+                else:
+                    load_passwords.clear()
+                    st.session_state.verified_owners.add(code)
+                    st.session_state.flash_success = f"🔐 Password set for {owner_name or code}."
+                    st.rerun()
+        st.stop()
+    entered_password = st.text_input("🔒 Enter this owner's password to continue",
+                                     type="password", key=f"pw_{code}")
+    if not entered_password:
+        st.stop()
+    if entered_password != stored_password:
+        st.error("Incorrect password.")
+        st.stop()
+    st.session_state.verified_owners.add(code)
 
 # ---- 3) Highrolling BA, only from this owner's team ----
 ba_pairs = A["ba_by_code"].get(code, [])
