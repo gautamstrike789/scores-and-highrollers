@@ -256,10 +256,7 @@ def scores_inputs(prefix, who):
                             placeholder="0", key=f"{prefix}_forms_{kind}_{code}_{n}")
     supports = c2.number_input(f"{who} Supports *", min_value=0.0, step=1.0, value=None,
                                format="%.2f", placeholder="0.00", key=f"{prefix}_supports_{kind}_{code}_{n}")
-    ads = compute_ads(kind, forms, supports)
-    rule = f"Supports × {RG_ADS_MULTIPLIER}" if kind == RG else "Supports ÷ Forms"
-    st.caption(f"ADS ({rule}): **{fmt_number(ads) if ads is not None else '—'}**")
-    return forms, supports, ads
+    return forms, supports, compute_ads(kind, forms, supports)
 
 
 # ---- 3) Team Sales — shown as soon as the owner is picked ----
